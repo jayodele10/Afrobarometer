@@ -1,0 +1,327 @@
+---
+title: "Afrobarometer Wave 7 Analysis on Petty Corruption in the Water and Sanitation Sector"
+output: html_document
+---
+
+```{r}
+# Import Libraries
+library(foreign) #for working with SAV files
+library(questionr)
+library(tidyverse) #for data preprocessing and visualization
+library(naniar) # aminly for working with NA values
+library(fastDummies)
+library(stargazer)
+library(xtable)
+library(sjPlot)
+
+```
+
+```{r, functions}
+# function to make variable list
+  Vlist <- function(dta) { 
+  labels <- attributes(dta)
+  tibble(name = labels[["names"]],
+         label = labels[["variable.labels"]])
+  }
+```
+
+```{r, data import}
+df = read.spss("Data/afro.sav", to.data.frame=TRUE)
+df14 = read.spss("Data/afro_14_15.sav", to.data.frame=TRUE)
+df_orig <- df
+
+# get variable list of df
+dfList <- Vlist(df)
+
+dfList14 <- Vlist(df14)
+
+# get required variables
+df <- df %>%select(COUNTRY, URBRUR_COND, Q101, AGE_COND, LivedPoverty_CAT, EDUC_COND, Q20A, Q20B, Q49B, Q49E, Q49I, Q49M, Q49P, Q49N )  %>% 
+  rename(
+    "country" = "COUNTRY",
+    "urban" = "URBRUR_COND",
+    "gender" = "Q101",
+    "poverty" = "LivedPoverty_CAT",
+    "age" = "AGE_COND",
+    "educ" = "EDUC_COND",
+    "rel_member" = "Q20A",
+    "comgroup_member" = "Q20B",
+    "pschool_user" = "Q49B",
+    "pmedic_user" = "Q49E",
+    "pid_user" = "Q49I",
+    "phouse_user" = "Q49M",
+    "ppolice_user" = "Q49P",
+    "bribery" = "Q49N"
+  )
+
+```
+
+### Data Wrangling
+```{r}
+str(df)
+
+omit_var <- c("Missing", "Don't know", "Refused")
+
+cdf <- df %>% 
+  lapply(., function(x) if(is.factor(x)) droplevels(replace(x, x %in% omit_var, NA))) %>% 
+  as.data.frame() %>% 
+  drop_na() %>% 
+  droplevels.data.frame()
+```
+
+Initial sample size is `r nrow(df)`. `r nrow(df) - nrow(cdf)` observations had at least one missing or invalid value for all variables. We remove these observations from our data, resulting into a sample size of `r nrow(cdf)` observations.
+
+```{r}
+# create an index for usage of public sector services
+sub_cdf <- cdf %>% 
+  select(ends_with("user")) %>% 
+  mutate(pschool_user = case_when(
+    pschool_user == "No contact" ~ 0,
+    TRUE ~ 1
+  ),
+  pmedic_user = case_when(
+    pmedic_user == "No contact" ~ 0,
+    TRUE ~ 1
+  ),
+  pid_user = case_when(
+    pid_user == "No contact" ~ 0,
+    TRUE ~ 1
+  ),
+  phouse_user = case_when(
+    phouse_user == "No contact" ~ 0,
+    TRUE ~ 1
+  ),
+  ppolice_user = case_when(
+    ppolice_user == "No contact" ~ 0,
+    TRUE ~ 1
+  )
+  ) %>% 
+  mutate(psector = rowSums(.)) %>% 
+  select(-ends_with("user")) %>% 
+  rename(
+    "psector_user" = "psector"
+  )
+
+# merge this index variable to the data
+cdf2 <- cdf %>% 
+  select(-c("pschool_user", "pmedic_user", "pid_user", "ppolice_user")) %>%
+  cbind(sub_cdf) %>% 
+  filter(phouse_user != "No contact")
+
+
+# reconstruct bribery variable into a binary variable
+cdf2 <- cdf2 %>% 
+  mutate(bribery = case_when(
+    bribery %in% c("Once or twice", "A few times", "Often") ~ "Experience",
+    TRUE ~ "No experience"
+  ),
+  bribery = factor(bribery, levels = c("No experience", "Experience")))
+```
+
+### Descriptive Statistics
+
+```{r themes, include = FALSE}
+# set new themes for the plots
+theme_flip <- theme(panel.background = element_rect(fill = "white"),
+        axis.text = element_text(size = 25, face = "bold"),
+        axis.text.x = element_blank(),
+        axis.title = element_text(size = rel(1)),
+        axis.ticks = element_blank(),
+        axis.line.y = element_line(colour = "grey"),
+        #plot.title = element_text(size=15, hjust = 0, vjust=2.12),
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 22),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0),
+        plot.background = element_rect(fill = "white"),
+        plot.caption = element_text(size = 14, face = "italic"),
+        strip.text.x = element_text(size = 11, face = "bold"))
+
+```
+```{r}
+# summary statistics for bribery as a corruption measure
+library(summarytools)
+library(RColorBrewer)
+
+cdf2 %>% select(bribery) %>% dfSummary()
+
+cdf2 %>% select(urban) %>% dfSummary()
+```
+
+A substantially large proportion of Africans (80%) report having no experience with paying bribes to obtain water and sanitation services. 
+
+```{r}
+# top 5 corrupt countries
+
+top5 <- cdf2 %>% group_by(country) %>% 
+  count(bribery) %>% 
+  mutate(perc = round(n / sum(n), 3),
+         pos = cumsum(perc) - 0.5*perc) %>% 
+  filter(bribery == "Experience") %>% 
+  ungroup() %>% 
+  top_n(5, perc) %>% 
+  ggplot(aes(x = fct_reorder(country, perc), y = perc)) +
+    geom_col(width = 0.7, fill = "turquoise4") +
+    geom_text(aes(y = perc, label = paste0(100*perc, "%")), nudge_y = 0.03, size = 9) +
+    labs(title = NULL,
+     y = NULL,
+     x = NULL) +
+  coord_flip() +
+  theme_flip
+
+print(top5)
+
+ggsave("Images/top5.png", width = 15, height = 7)
+
+# least 5 corrupt countries
+
+b5 <- cdf2 %>% group_by(country) %>% 
+  count(bribery) %>% 
+  mutate(perc = round(n / sum(n), 3),
+         pos = cumsum(perc) - 0.5*perc) %>% 
+  filter(bribery == "Experience") %>% 
+  ungroup() %>% 
+  top_n(-5, perc) %>% 
+  ggplot(aes(x = fct_reorder(country, perc), y = perc)) +
+    geom_col(width = 0.7, fill = "turquoise4") +
+    geom_text(aes(y = perc, label = paste0(100*perc, "%")), nudge_y = 0.006, size = 9) +
+    labs(title = NULL,
+     y = NULL,
+     x = NULL) +
+  coord_flip() +
+  theme_flip
+
+print(b5)
+
+ggsave("Images/b5.png", width = 14, height = 7, scale = 1)
+```
+
+```{r}
+# bribery incidence by urban-rural settlements
+urban <- cdf2 %>% group_by(urban) %>% 
+  count(bribery) %>% 
+  mutate(perc = round(n / sum(n), 3),
+         pos = cumsum(perc) - 0.5*perc) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = fct_reorder(urban, perc), y = perc, fill = fct_rev(bribery), label = ifelse(perc >= 0.04, paste0(100*perc,"% ", "\n"), ""))) +
+    geom_col(width = 0.7) +
+    geom_text(aes(label = ifelse(perc >= 0.06, paste0(100*perc,"% ", "(",n,")"), ""),y = pos), size = 11, color = "white", fontface = "bold") +
+    labs(title = NULL,
+     y = NULL,
+     x = NULL) +
+  coord_flip() +
+  scale_fill_manual(values = c("turquoise3", "turquoise4")) +
+  guides(fill = guide_legend(reverse = TRUE)) + #reverse the legend order+
+  theme_flip
+
+print(urban)
+
+ggsave("Images/urban.png", width = 17, height = 9)
+```
+
+Bribery experience is more widespread in urban than in rural areas. While 18.6% of repsondents in rural settlements report having to pay bribes in return for WatSan services, the corresponding proportion is 21.4% for urban areas. 
+
+ˆ
+```{r}
+# bribery incidence by gender
+gender <- cdf2 %>% group_by(gender) %>% 
+  count(bribery) %>% 
+  mutate(perc = round(n / sum(n), 3),
+         pos = cumsum(perc) - 0.5*perc) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = fct_reorder(gender, perc), y = perc, fill = fct_rev(bribery), label = ifelse(perc >= 0.04, paste0(100*perc,"% ", "\n"), ""))) +
+    geom_col(width = 0.7) +
+    geom_text(aes(label = ifelse(perc >= 0.06, paste0(100*perc,"% ", "(",n,")"), ""),y = pos), size = 11, color = "white", fontface = "bold") +
+    labs(title = NULL,
+     y = NULL,
+     x = NULL) +
+  coord_flip() +
+  scale_fill_manual(values = c("turquoise3", "turquoise4")) +
+  guides(fill = guide_legend(reverse = TRUE)) + #reverse the legend order+
+  theme_flip
+
+print(gender)
+
+ggsave("Images/gender.png", width = 17, height = 9)
+```
+
+No subtantial difference exists between women and men in terms of their experience with paying bribes to obtain water and sanitation services. 19.3% of women have had to pay bribes to obtain water services, while 20.6% of men report having a bribery experience. 
+
+```{r}
+# bribery experience by poverty level
+poverty <- cdf2 %>% 
+  mutate(poverty = fct_relevel(poverty, "High Lived Poverty",  "Moderate Lived Poverty", "Low Lived Poverty", "No Lived Poverty")) %>% 
+  group_by(poverty) %>% 
+  count(bribery) %>% 
+  mutate(perc = round(n / sum(n), 3),
+         pos = cumsum(perc) - 0.5*perc) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = fct_reorder(poverty, perc), y = perc, fill = fct_rev(bribery), label = ifelse(perc >= 0.04, paste0(100*perc,"% ", "\n"), ""))) +
+    geom_col(width = 0.7) +
+    geom_text(aes(label = ifelse(perc >= 0.06, paste0(100*perc,"% ", "(",n,")"), ""),y = pos), size = 9, color = "white", fontface = "bold") +
+    labs(title = NULL,
+     y = NULL,
+     x = NULL) +
+  coord_flip() +
+  scale_fill_manual(values = c("turquoise3", "turquoise4")) +
+  guides(fill = guide_legend(reverse = TRUE)) + #reverse the legend order+
+  theme_flip
+
+print(poverty)
+
+ggsave("Images/poverty.png", width = 17, height = 9)
+```
+
+The Index of Lived Poverty scale has been used in previous woeks to measure individual level of poverty.  High values indicate poor and deprived living conditions (i.e. lack of basic necessities on a regular basis), while low values reflect very good socio-economic conditions. Based on this index, five groups of respondents are distinguished, namely: No Lived Poverty, Low Lived Poverty, High Lived Poverty, Moderate Lived Poverty, and High Lived Poverty. The descriptive analyses show that the level of one's experience with paying by poverty level, with bribery experience intensifing as as one moves up the poverty index scale. Only 16.5% of respondents who have never lacked basic necessities report having to pay bribes to obtain water and sanitation services. The corresponding proportion is 23.4% for those living in abject poverty.
+
+```{r}
+# bribery experience by age
+age <- cdf2 %>% group_by(age) %>% 
+  count(bribery) %>% 
+  mutate(perc = round(n / sum(n), 3),
+         pos = cumsum(perc) - 0.5*perc) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = fct_reorder(age, perc), y = perc, fill = fct_rev(bribery), label = ifelse(perc >= 0.04, paste0(100*perc,"% ", "\n"), ""))) +
+    geom_col(width = 0.7) +
+    geom_text(aes(label = ifelse(perc >= 0.06, paste0(100*perc,"% ", "(",n,")"), ""),y = pos), size = 9, color = "white", fontface = "bold") +
+    labs(title = NULL,
+     y = NULL,
+     x = NULL) +
+  coord_flip() +
+  scale_fill_manual(values = c("turquoise3", "turquoise4")) +
+  guides(fill = guide_legend(reverse = TRUE)) + #reverse the legend order+
+  theme_flip
+
+print(age)
+
+ggsave("Images/age.png", width = 17, height = 9)
+```
+
+Experience with paying bribes is more common among the younger population than among the older population.
+
+
+### Empirical Analysis
+```{r}
+model1 <- glm(bribery ~ poverty+ urban+ gender+age+educ+rel_member+comgroup_member + psector_user+country, 
+              data = cdf2, 
+              family=binomial())
+
+model1_OR <- exp(coef(model1))
+model1_CI <- exp(confint(model1))
+model1_p.values <- list(summary(model1)$coefficients[,4])
+
+stargazer(model1,
+          style = "ajps",
+          coef = list(model1_OR), 
+          p=c(model1_p.values),
+          single.row = F,
+          type = "latex",
+          title = "Binary Logistic Regression",
+          dep.var.labels = c("Poverty"),
+          omit = c("country", "rel_member", "comgroup_member"))
+
+  
+```
+
