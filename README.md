@@ -2,8 +2,7 @@
 The prevalence of bribery in the Water and Sanitation sector of Sub-saharan Africa is investigated in this work. 
 
 ## Data
-The empirical analysis draws on data from the seventh round of Afrobarometer’s public attitude survey. Data is restricted to respondents who reported having made contact with the government to obtain water and sanitation services in the last year. Invalid responses and observations with missing responses are also omit-
-ted from the sample. These restrictions produce a final sample size of 7457 respondents.
+The empirical analysis draws on data from the seventh round of Afrobarometer’s public attitude survey. Data is restricted to respondents who reported having made contact with the government to obtain water and sanitation services in the last year. Invalid responses and observations with missing responses are also omitted from the sample. These restrictions produce a final sample size of 7457 respondents.
 
 ## Key Findings
 1. Out of all citizens who had contact with a public official to obtain water and sanitation services, 20% paid a bribe to obtain the service they required. This figure was higher for some countries than others.  
